@@ -1,0 +1,208 @@
+{
+  "name": "AI Document Summarizer to Slack",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "8b3a5c0e-9f7d-4e1a-b2c3-d4e5f6a7b8c9",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "command": "find /files -type f \\( -name '*.pdf' -o -name '*.docx' -o -name '*.md' -o -name '*.txt' \\) -print"
+      },
+      "id": "9a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d",
+      "name": "List All Files",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Split file paths into separate items\nconst output = items[0].json.stdout;\nconst filePaths = output.split('\\n').filter(path => path.trim() !== '');\n\nreturn filePaths.map(path => ({\n  json: {\n    filePath: path.trim()\n  }\n}));"
+      },
+      "id": "0b1c2d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5e",
+      "name": "Split File Paths",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "filePath": "={{ $json.filePath }}",
+        "options": {}
+      },
+      "id": "1c2d3e4f-5a6b-7c8d-9e0f-1a2b3c4d5e6f",
+      "name": "Read Binary File",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "id": "1d2e3f4a-5b6c-7d8e-9f0a-1b2c3d4e5f6a",
+      "name": "Extract from File",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge all extracted text from all files\nconst allTexts = [];\n\nfor (const item of items) {\n  const filePath = item.json.filePath || 'unknown';\n  const fileName = filePath.split('/').pop();\n  const text = item.json.data || '';\n  \n  allTexts.push(`\\n\\n--- File: ${fileName} ---\\n${text}`);\n}\n\nconst mergedText = allTexts.join('\\n');\n\nreturn [\n  {\n    json: {\n      mergedText: mergedText,\n      fileCount: items.length\n    }\n  }\n];"
+      },
+      "id": "2d3e4f5a-6b7c-8d9e-0f1a-2b3c4d5e6f7a",
+      "name": "Merge All Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare Ollama API payload with merged text\nconst text = items[0].json.mergedText;\nconst fileCount = items[0].json.fileCount;\n\n// Build the JSON payload as a string\nconst jsonPayload = JSON.stringify({\n  model: \"qwen2.5:3b-instruct\",\n  prompt: `Please provide a concise summary of the following ${fileCount} document(s):\\n\\n${text}`,\n  stream: false\n});\n\nreturn [\n  {\n    json: {\n      ollamaPayload: jsonPayload,\n      originalText: text,\n      fileCount: fileCount\n    }\n  }\n];"
+      },
+      "id": "2e4f5a6b-7c8d-9e0f-1a2b-3c4d5e6f7a8c",
+      "name": "Prepare Ollama Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://ollama:11434/api/generate",
+        "method": "POST",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.ollamaPayload }}",
+        "options": {
+          "timeout": 1200000
+        }
+      },
+      "id": "3e4f5a6b-7c8d-9e0f-1a2b-3c4d5e6f7a8b",
+      "name": "Summarize with AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1650, 300]
+    },
+    {
+      "parameters": {
+        "url": "YOUR_SLACK_WEBHOOK_URL_HERE",
+        "method": "POST",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ text: \"*Document Summary (\" + $('Prepare Ollama Request').item.json.fileCount + \" files)*\\n\\n\" + $json.response }) }}",
+        "options": {}
+      },
+      "id": "4f5a6b7c-8d9e-0f1a-2b3c-4d5e6f7a8b9c",
+      "name": "Send to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1850, 300]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "List All Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List All Files": {
+      "main": [
+        [
+          {
+            "node": "Split File Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split File Paths": {
+      "main": [
+        [
+          {
+            "node": "Read Binary File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Binary File": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Merge All Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge All Text": {
+      "main": [
+        [
+          {
+            "node": "Prepare Ollama Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Ollama Request": {
+      "main": [
+        [
+          {
+            "node": "Summarize with AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize with AI": {
+      "main": [
+        [
+          {
+            "node": "Send to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-10-22T00:00:00.000Z",
+  "versionId": "10"
+}
